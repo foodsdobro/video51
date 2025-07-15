@@ -1,14 +1,17 @@
 name: Create VPS
 
 on:
-  workflow_dispatch:          # ✅ Manual "Run workflow" button
-  repository_dispatch:        # ✅ Can still be triggered by API or other workflows
+  workflow_dispatch:
+  repository_dispatch:
     types: [create-vps]
 
 jobs:
   start-vps:
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 6 hours max
+    timeout-minutes: 4320  # 72 hours
+
+    env:
+      TMATE_SERVER: nyc1.tmate.io
 
     steps:
       - name: ⬇️ Checkout
@@ -17,37 +20,47 @@ jobs:
       - name: 📁 Create dirs
         run: mkdir -p links .backup
 
-      - name: 💾 Restore backup
+      - name: 💾 Restore backup (if exists)
         run: |
-          name="${{ github.event.client_payload.vps_name }}"
+          name="${{ github.event.client_payload.vps_name || 'manual-vps' }}"
           if [ "${{ github.event.client_payload.backup }}" == "true" ]; then
             echo "📦 Restoring backup..."
-            unzip ".backup/$name.zip" -d . || echo "⚠️ No backup to restore."
+            unzip ".backup/$name.zip" -d . || echo "⚠️ No backup found."
           fi
 
       - name: 🔐 Start tmate session
         run: |
-          echo "⚙️ Launching tmate..."
+          echo "⚙️ Installing tmate..."
           sudo apt update && sudo apt install -y tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           echo "$SSH" > "links/${{ github.event.client_payload.vps_name || 'manual-vps' }}.txt"
           echo "✅ SSH Ready: $SSH"
-          sleep 60  # give time for GitHub to sync
+
+      - name: 🚀 Start Playit Tunnel
+        run: |
+          echo "🌐 Downloading Playit..."
+          wget https://github.com/playit-cloud/playit-agent/releases/latest/download/playit-linux-amd64 -O playit
+          chmod +x playit
+          nohup ./playit > playit.log 2>&1 &
+          echo "✅ Playit is starting... check https://playit.gg/link to authorize if prompted."
 
       - name: 📦 Save backup
         run: |
           name="${{ github.event.client_payload.vps_name || 'manual-vps' }}"
           zip -r ".backup/$name.zip" . -x ".git/*" ".github/*" ".backup/*" || true
 
-      - name: 📤 Push
+      - name: 📤 Push updated links & backup
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           commit_message: "🔁 Updated SSH + backup for ${{ github.event.client_payload.vps_name || 'manual-vps' }}"
           file_pattern: 'links/*.txt .backup/*.zip'
 
-      - name: ⏳ Keep session alive
+      - name: ⏳ Keep VPS alive for 72 hours
         run: |
-          echo "⏳ Keeping session alive for 6 hours..."
-          sleep $((360 * 60))
+          echo "⏳ Keeping VPS alive..."
+          for i in {1..4320}; do
+            echo "🟢 Alive... Minute $i"
+            sleep 60
+          done
